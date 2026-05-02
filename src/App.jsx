@@ -1,12 +1,11 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useRef } from 'react'
 import {
   registerUser, loginUser,
   getCollection, saveCollection,
   getAllCollections,
-  getInbox, sendMessage,
+  getInbox, sendTradeRequest,
+  acceptTrade, rejectTrade, completeTrade,
 } from './lib/db.js'
-
-// ─── DATOS DEL ÁLBUM ─────────────────────────────────────────────────────────
 
 const PAGES = [
   { code:'FWC', name:'FIFA World Cup 2026', flag:'🌍',  n:20, start:0 },
@@ -60,9 +59,7 @@ const PAGES = [
   { code:'PAN', name:'Panamá',              flag:'🇵🇦', n:20 },
   { code:'CC',  name:'Copa y Ceremonias',   flag:'🏆',   n:14 },
 ]
-const TOTAL = PAGES.reduce((s, p) => s + p.n, 0) // 987
-
-// ─── ESTILOS BASE ─────────────────────────────────────────────────────────────
+const TOTAL = PAGES.reduce((s, p) => s + p.n, 0)
 
 const C = {
   bg:'#0c1220', surface:'#111827', card:'#162032',
@@ -72,10 +69,8 @@ const C = {
 }
 const navBtn = (active, accent = C.gold) => ({
   padding:'5px 13px', borderRadius:8, fontSize:13, cursor:'pointer', fontWeight:active?600:400,
-  background:active?`${accent}22`:'transparent',
-  color:active?accent:C.muted,
-  border:active?`1px solid ${accent}55`:'1px solid transparent',
-  transition:'all 0.15s',
+  background:active?`${accent}22`:'transparent', color:active?accent:C.muted,
+  border:active?`1px solid ${accent}55`:'1px solid transparent', transition:'all 0.15s',
 })
 const INPUT = {
   padding:'11px 14px', borderRadius:10, background:'#0a0f1e',
@@ -83,31 +78,41 @@ const INPUT = {
   outline:'none', width:'100%', boxSizing:'border-box',
 }
 
-// ─── COMPONENTES UI ──────────────────────────────────────────────────────────
+// ─── CHIP ─────────────────────────────────────────────────────────────────────
 
-function Chip({ num, owned, dupes, onClick }) {
+function Chip({ num, owned, dupes, pending, onClick }) {
   const hasDupe = dupes > 0
+  const isPending = pending && !owned
+
+  let bg, border, color, glow, label
+  if (hasDupe) {
+    bg = 'linear-gradient(135deg,#92400e,#d97706)'; border = '#d9770644'
+    color = '#fff'; glow = '0 0 10px #d9770633'; label = `×${dupes}`
+  } else if (owned) {
+    bg = 'linear-gradient(135deg,#064e3b,#059669)'; border = '#05966944'
+    color = '#fff'; glow = '0 0 8px #05966933'; label = '✓'
+  } else if (isPending) {
+    bg = '#1a2744'; border = '#3b82f655'
+    color = '#60a5fa'; glow = '0 0 8px #3b82f622'; label = '⏳'
+  } else {
+    bg = C.card; border = C.border; color = C.dim; glow = 'none'; label = null
+  }
+
+  const display = num === 0 ? '00' : num
+
   return (
     <button
       onClick={onClick}
-      title={hasDupe ? `${num} · ×${dupes} repetida(s)` : owned ? `${num} · tengo` : `${num} · me falta`}
-      style={{
-        width:40, height:40, borderRadius:7, cursor:'pointer', flexShrink:0,
-        border:`1px solid ${hasDupe?'#d9770644':owned?'#05966944':C.border}`,
-        background: hasDupe ? 'linear-gradient(135deg,#92400e,#d97706)'
-                  : owned   ? 'linear-gradient(135deg,#064e3b,#059669)'
-                  : C.card,
-        color:(owned||hasDupe)?'#fff':C.dim,
+      title={isPending?`${display} · intercambio aceptado, pendiente de entrega`:hasDupe?`${display} · ×${dupes} repetida(s)`:owned?`${display} · tengo`:`${display} · me falta`}
+      style={{ width:40, height:40, borderRadius:7, cursor:'pointer', flexShrink:0,
+        border:`1px solid ${border}`, background:bg, color,
         display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
-        gap:0, lineHeight:1.1, fontWeight:700, transition:'transform 0.08s',
-        boxShadow: hasDupe?'0 0 10px #d9770633':owned?'0 0 8px #05966933':'none',
-      }}
+        gap:0, lineHeight:1.1, fontWeight:700, transition:'transform 0.08s', boxShadow:glow }}
       onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.18)'}
       onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
     >
-      <span style={{ fontSize:13 }}>{num === 0 ? '00' : num}</span>
-      {hasDupe && <span style={{ fontSize:9, opacity:0.9 }}>×{dupes}</span>}
-      {owned && !hasDupe && <span style={{ fontSize:9 }}>✓</span>}
+      <span style={{ fontSize:13 }}>{display}</span>
+      {label && <span style={{ fontSize:9, opacity:0.9 }}>{label}</span>}
     </button>
   )
 }
@@ -122,11 +127,7 @@ function Stat({ label, value, color }) {
 }
 
 function Tag({ text, color }) {
-  return (
-    <span style={{ background:`${color}20`, border:`1px solid ${color}44`, borderRadius:5, padding:'2px 7px', fontSize:11, color, whiteSpace:'nowrap' }}>
-      {text}
-    </span>
-  )
+  return <span style={{ background:`${color}20`, border:`1px solid ${color}44`, borderRadius:5, padding:'2px 7px', fontSize:11, color, whiteSpace:'nowrap' }}>{text}</span>
 }
 
 function Empty({ icon, title, sub }) {
@@ -139,7 +140,7 @@ function Empty({ icon, title, sub }) {
   )
 }
 
-// ─── PANTALLA AUTH ───────────────────────────────────────────────────────────
+// ─── AUTH ─────────────────────────────────────────────────────────────────────
 
 function AuthScreen({ mode, setMode, form, setForm, onSubmit, error, loading }) {
   return (
@@ -150,39 +151,17 @@ function AuthScreen({ mode, setMode, form, setForm, onSubmit, error, loading }) 
           <h1 style={{ fontSize:30, fontWeight:900, color:C.gold, letterSpacing:3, margin:'10px 0 6px', textTransform:'uppercase' }}>MUNDIAL 2026</h1>
           <p style={{ color:C.muted, fontSize:13 }}>Organizá tu álbum de figuritas</p>
         </div>
-
         <div style={{ display:'flex', background:'#0a0f1e', borderRadius:12, padding:3, marginBottom:24, gap:3 }}>
           {[['login','Iniciar sesión'],['register','Registrarse']].map(([m,l]) => (
-            <button key={m} onClick={() => setMode(m)} style={{ flex:1, padding:'9px', borderRadius:9, border:'none', cursor:'pointer', fontSize:14, fontWeight:500, transition:'all 0.15s', background:mode===m?C.gold:'transparent', color:mode===m?'#0a0f1e':C.muted }}>
-              {l}
-            </button>
+            <button key={m} onClick={() => setMode(m)} style={{ flex:1, padding:'9px', borderRadius:9, border:'none', cursor:'pointer', fontSize:14, fontWeight:500, transition:'all 0.15s', background:mode===m?C.gold:'transparent', color:mode===m?'#0a0f1e':C.muted }}>{l}</button>
           ))}
         </div>
-
         <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
-          {mode === 'register' && (
-            <input placeholder="Nombre completo (ej: Juan Pérez)" value={form.name} onChange={e => setForm({...form, name:e.target.value})} style={INPUT} />
-          )}
-          <input
-            placeholder="Usuario (sin espacios, minúsculas)"
-            value={form.username}
-            onChange={e => setForm({...form, username:e.target.value.toLowerCase().replace(/\s/g,'')})}
-            onKeyDown={e => e.key==='Enter' && onSubmit()}
-            style={INPUT}
-          />
-          <input
-            type="password" placeholder="Contraseña"
-            value={form.password}
-            onChange={e => setForm({...form, password:e.target.value})}
-            onKeyDown={e => e.key==='Enter' && onSubmit()}
-            style={INPUT}
-          />
-          {error && (
-            <div style={{ background:'rgba(239,68,68,0.1)', border:'1px solid #7f1d1d', borderRadius:8, padding:'8px 12px', color:'#fca5a5', fontSize:13, textAlign:'center' }}>
-              {error}
-            </div>
-          )}
-          <button onClick={onSubmit} disabled={loading} style={{ padding:'13px', borderRadius:12, background:loading?'#1e2d4a':`linear-gradient(135deg,#b45309,${C.gold})`, color:loading?C.muted:'#0a0f1e', fontWeight:800, border:'none', cursor:loading?'not-allowed':'pointer', letterSpacing:2, fontSize:17, marginTop:4, transition:'all 0.2s', textTransform:'uppercase' }}>
+          {mode === 'register' && <input placeholder="Nombre completo" value={form.name} onChange={e => setForm({...form, name:e.target.value})} style={INPUT} />}
+          <input placeholder="Usuario (sin espacios)" value={form.username} onChange={e => setForm({...form, username:e.target.value.toLowerCase().replace(/\s/g,'')})} onKeyDown={e => e.key==='Enter' && onSubmit()} style={INPUT} />
+          <input type="password" placeholder="Contraseña" value={form.password} onChange={e => setForm({...form, password:e.target.value})} onKeyDown={e => e.key==='Enter' && onSubmit()} style={INPUT} />
+          {error && <div style={{ background:'rgba(239,68,68,0.1)', border:'1px solid #7f1d1d', borderRadius:8, padding:'8px 12px', color:'#fca5a5', fontSize:13, textAlign:'center' }}>{error}</div>}
+          <button onClick={onSubmit} disabled={loading} style={{ padding:'13px', borderRadius:12, background:loading?'#1e2d4a':`linear-gradient(135deg,#b45309,${C.gold})`, color:loading?C.muted:'#0a0f1e', fontWeight:800, border:'none', cursor:loading?'not-allowed':'pointer', letterSpacing:2, fontSize:17, marginTop:4, textTransform:'uppercase' }}>
             {loading ? 'Verificando...' : mode==='login' ? 'Entrar' : 'Crear cuenta'}
           </button>
         </div>
@@ -191,7 +170,7 @@ function AuthScreen({ mode, setMode, form, setForm, onSubmit, error, loading }) 
   )
 }
 
-// ─── ÁLBUM ───────────────────────────────────────────────────────────────────
+// ─── ÁLBUM ────────────────────────────────────────────────────────────────────
 
 function AlbumScreen({ col, filter, setFilter, toggle, stats }) {
   const [hint, setHint] = useState(true)
@@ -207,20 +186,16 @@ function AlbumScreen({ col, filter, setFilter, toggle, stats }) {
       {hint && (
         <div style={{ background:'#162032', border:`1px solid ${C.border2}`, borderRadius:10, padding:'10px 14px', marginBottom:12, fontSize:12, color:C.muted, display:'flex', gap:10, alignItems:'center' }}>
           <span>
-            💡 <strong style={{color:C.text}}>Cómo marcar:</strong>{' '}
-            1er clic = <span style={{color:C.green}}>✓ la tengo</span> ·{' '}
-            2do clic = <span style={{color:C.gold}}>×1 repetida</span> ·{' '}
-            Más clics = más repetidas · Al llegar a ×10 vuelve a "me falta"
+            💡 1er clic = <span style={{color:C.green}}>✓ tengo</span> · 2do = <span style={{color:C.gold}}>×1 repetida</span> · Más clics = más repetidas · A ×10 vuelve a "me falta" ·
+            <span style={{color:C.blue}}> ⏳ = intercambio aceptado pendiente</span>
           </span>
           <button onClick={() => setHint(false)} style={{ marginLeft:'auto', background:'transparent', border:'none', color:C.muted, cursor:'pointer', fontSize:16, flexShrink:0 }}>✕</button>
         </div>
       )}
 
       <div style={{ display:'flex', gap:6, marginBottom:14, flexWrap:'wrap' }}>
-        {[['all','Todas'],['owned','✓ Tengo'],['missing','✗ Me faltan'],['dupes','× Repetidas']].map(([v,l]) => (
-          <button key={v} onClick={() => setFilter(v)} style={{ padding:'5px 14px', borderRadius:99, fontSize:13, cursor:'pointer', fontWeight:500, border:'none', background:filter===v?C.gold:C.surface, color:filter===v?'#0a0f1e':C.muted, transition:'all 0.15s' }}>
-            {l}
-          </button>
+        {[['all','Todas'],['owned','✓ Tengo'],['missing','✗ Me faltan'],['dupes','× Repetidas'],['pending','⏳ Pendientes']].map(([v,l]) => (
+          <button key={v} onClick={() => setFilter(v)} style={{ padding:'5px 14px', borderRadius:99, fontSize:13, cursor:'pointer', fontWeight:500, border:'none', background:filter===v?C.gold:C.surface, color:filter===v?'#0a0f1e':C.muted, transition:'all 0.15s' }}>{l}</button>
         ))}
       </div>
 
@@ -228,39 +203,40 @@ function AlbumScreen({ col, filter, setFilter, toggle, stats }) {
         const nums = Array.from({length:p.n}, (_,i) => (p.start ?? 1) + i)
         const ownedCount = nums.filter(n => col.owned[`${p.code}-${n}`]).length
         const hasDupesInPage = nums.some(n => (col.dupes[`${p.code}-${n}`]||0) > 0)
+        const hasPendingInPage = nums.some(n => col.pending[`${p.code}-${n}`] && !col.owned[`${p.code}-${n}`])
 
-        if (filter==='owned'  && ownedCount===0)   return null
-        if (filter==='missing' && ownedCount===p.n) return null
-        if (filter==='dupes'  && !hasDupesInPage)  return null
+        if (filter==='owned'   && ownedCount===0)    return null
+        if (filter==='missing' && ownedCount===p.n)  return null
+        if (filter==='dupes'   && !hasDupesInPage)   return null
+        if (filter==='pending' && !hasPendingInPage) return null
 
         const visible = nums.filter(n => {
           const k = `${p.code}-${n}`
           if (filter==='owned')   return  !!col.owned[k]
           if (filter==='missing') return !col.owned[k]
           if (filter==='dupes')   return (col.dupes[k]||0) > 0
+          if (filter==='pending') return !!col.pending[k] && !col.owned[k]
           return true
         })
         if (visible.length===0) return null
-
         const full = ownedCount===p.n
+
         return (
           <div key={p.code} style={{ marginBottom:12, background:C.surface, borderRadius:12, overflow:'hidden', border:`1px solid ${full?'#065f46':C.border}` }}>
             <div style={{ padding:'8px 12px', background:C.card, display:'flex', justifyContent:'space-between', alignItems:'center', borderBottom:`1px solid ${C.border}` }}>
-              <span style={{ fontSize:15, fontWeight:700, color:C.text }}>{p.flag} {p.name}</span>
+              <span style={{ fontSize:15, fontWeight:700, color:C.text }}>
+                <span style={{ fontSize:13, color:C.muted, marginRight:6, fontFamily:'monospace' }}>{p.code}</span>
+                {p.flag} {p.name}
+              </span>
               <span style={{ fontSize:12, fontWeight:600, color:full?C.green:C.muted, background:full?'rgba(16,185,129,0.12)':'transparent', padding:full?'2px 8px':'0', borderRadius:99 }}>
                 {ownedCount}/{p.n}{full?' ✓':''}
               </span>
             </div>
             <div style={{ padding:'10px', display:'flex', flexWrap:'wrap', gap:5 }}>
-              {visible.map(n => (
-                <Chip
-                  key={n}
-                  num={n}
-                  owned={!!col.owned[`${p.code}-${n}`]}
-                  dupes={col.dupes[`${p.code}-${n}`]||0}
-                  onClick={() => toggle(p.code, n)}
-                />
-              ))}
+              {visible.map(n => {
+                const k = `${p.code}-${n}`
+                return <Chip key={n} num={n} owned={!!col.owned[k]} dupes={col.dupes[k]||0} pending={!!col.pending[k]} onClick={() => toggle(p.code, n)} />
+              })}
             </div>
           </div>
         )
@@ -271,7 +247,7 @@ function AlbumScreen({ col, filter, setFilter, toggle, stats }) {
 
 // ─── INTERCAMBIOS ─────────────────────────────────────────────────────────────
 
-function TradesScreen({ col, tradeData, loading, onContact }) {
+function TradesScreen({ col, tradeData, loading, onIntercambiar }) {
   if (loading) return (
     <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:60, color:C.muted }}>
       <div style={{ fontSize:40, marginBottom:16 }}>⚽</div>
@@ -279,25 +255,22 @@ function TradesScreen({ col, tradeData, loading, onContact }) {
     </div>
   )
 
-  const myMissing = new Set()
-  const myDupes   = new Set()
-  for (const p of PAGES) for (let i=1; i<=p.n; i++) {
+  const myMissing = new Set(), myDupes = new Set()
+  for (const p of PAGES) for (let i=(p.start??1); i<(p.start??1)+p.n; i++) {
     const k = `${p.code}-${i}`
-    if (!col.owned[k])          myMissing.add(k)
-    if ((col.dupes[k]||0) > 0)  myDupes.add(k)
+    if (!col.owned[k]) myMissing.add(k)
+    if ((col.dupes[k]||0) > 0) myDupes.add(k)
   }
 
   const matches = []
   if (tradeData?.users) {
     for (const [uname, uinfo] of Object.entries(tradeData.users)) {
-      const theirDupes   = new Set(Object.entries(uinfo.col.dupes||{}).filter(([,v])=>v>0).map(([k])=>k))
+      const theirDupes = new Set(Object.entries(uinfo.col.dupes||{}).filter(([,v])=>v>0).map(([k])=>k))
       const theirMissing = new Set()
-      for (const p of PAGES) for (let i=1;i<=p.n;i++) { const k=`${p.code}-${i}`; if (!uinfo.col.owned[k]) theirMissing.add(k) }
-
+      for (const p of PAGES) for (let i=(p.start??1); i<(p.start??1)+p.n; i++) { const k=`${p.code}-${i}`; if (!uinfo.col.owned[k]) theirMissing.add(k) }
       const give = [...theirDupes].filter(k => myMissing.has(k))
       const take = [...myDupes].filter(k => theirMissing.has(k))
-      if (give.length>0 || take.length>0)
-        matches.push({ username:uname, name:uinfo.name, give, take, score:give.length+take.length })
+      if (give.length>0 || take.length>0) matches.push({ username:uname, name:uinfo.name, give, take, score:give.length+take.length })
     }
     matches.sort((a,b) => b.score-a.score)
   }
@@ -310,14 +283,14 @@ function TradesScreen({ col, tradeData, loading, onContact }) {
         <h2 style={{ fontSize:22, fontWeight:800, color:C.gold, marginBottom:6, textTransform:'uppercase', letterSpacing:1 }}>🔄 Intercambios</h2>
         <div style={{ display:'flex', gap:16, fontSize:13, color:C.muted, flexWrap:'wrap' }}>
           <span>📦 <strong style={{color:C.gold}}>{myDupes.size}</strong> repetidas disponibles</span>
-          <span>🔍 <strong style={{color:C.red}}>{myMissing.size}</strong> figuritas que necesito</span>
+          <span>🔍 <strong style={{color:C.red}}>{myMissing.size}</strong> me faltan</span>
         </div>
       </div>
 
       {noUsers
-        ? <Empty icon="👥" title="Aún no hay otros usuarios registrados" sub="¡Invitá a tus amigos a usar la app!" />
+        ? <Empty icon="👥" title="Aún no hay otros usuarios" sub="¡Invitá a tus amigos!" />
         : matches.length===0
-          ? <Empty icon="🔍" title="Sin coincidencias por ahora" sub="Marcá más figuritas como repetidas (×) para encontrar intercambios" />
+          ? <Empty icon="🔍" title="Sin coincidencias por ahora" sub="Marcá más figuritas como repetidas (×)" />
           : (
             <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
               {matches.map(m => (
@@ -328,28 +301,28 @@ function TradesScreen({ col, tradeData, loading, onContact }) {
                       <span style={{ color:C.muted, fontSize:12, marginLeft:8 }}>@{m.username}</span>
                     </div>
                     <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                      <span style={{ fontSize:13, fontWeight:700, color:C.green }}>{m.give.length+m.take.length} figus en común</span>
-                      <button onClick={() => onContact(m.username, m.name)} style={{ padding:'5px 14px', background:`linear-gradient(135deg,#1d4ed8,${C.blue})`, color:'#fff', border:'none', borderRadius:8, cursor:'pointer', fontSize:13, fontWeight:700 }}>
-                        ✉️ Contactar
+                      <span style={{ fontSize:13, fontWeight:700, color:C.green }}>{m.give.length+m.take.length} en común</span>
+                      <button onClick={() => onIntercambiar(m.username, m.name, m.give, m.take)}
+                        style={{ padding:'6px 16px', background:`linear-gradient(135deg,#065f46,${C.green})`, color:'#fff', border:'none', borderRadius:8, cursor:'pointer', fontSize:13, fontWeight:700 }}>
+                        🔄 Intercambiar
                       </button>
                     </div>
                   </div>
-
-                  {m.give.length > 0 && (
+                  {m.give.length>0 && (
                     <div style={{ marginBottom:8 }}>
                       <div style={{ fontSize:12, color:C.green, fontWeight:700, marginBottom:5 }}>✅ Te puede dar ({m.give.length}):</div>
                       <div style={{ display:'flex', flexWrap:'wrap', gap:4 }}>
                         {m.give.slice(0,30).map(k => <Tag key={k} text={k} color={C.green} />)}
-                        {m.give.length>30 && <span style={{color:C.muted,fontSize:11,alignSelf:'center'}}>+{m.give.length-30} más</span>}
+                        {m.give.length>30 && <span style={{color:C.muted,fontSize:11,alignSelf:'center'}}>+{m.give.length-30}</span>}
                       </div>
                     </div>
                   )}
-                  {m.take.length > 0 && (
+                  {m.take.length>0 && (
                     <div>
                       <div style={{ fontSize:12, color:C.gold, fontWeight:700, marginBottom:5 }}>🎁 Vos le podés dar ({m.take.length}):</div>
                       <div style={{ display:'flex', flexWrap:'wrap', gap:4 }}>
                         {m.take.slice(0,30).map(k => <Tag key={k} text={k} color={C.gold} />)}
-                        {m.take.length>30 && <span style={{color:C.muted,fontSize:11,alignSelf:'center'}}>+{m.take.length-30} más</span>}
+                        {m.take.length>30 && <span style={{color:C.muted,fontSize:11,alignSelf:'center'}}>+{m.take.length-30}</span>}
                       </div>
                     </div>
                   )}
@@ -362,37 +335,68 @@ function TradesScreen({ col, tradeData, loading, onContact }) {
   )
 }
 
-// ─── MENSAJES ─────────────────────────────────────────────────────────────────
+// ─── INBOX ────────────────────────────────────────────────────────────────────
 
-function InboxScreen({ inbox, onRefresh }) {
+function InboxScreen({ inbox, onRefresh, onAccept, onReject, onComplete }) {
+  const statusLabel = { pending:'🟡 Pendiente', accepted:'🔵 Aceptado', completed:'✅ Realizado', rejected:'❌ Rechazado' }
+  const statusColor = { pending:C.gold, accepted:C.blue, completed:C.green, rejected:C.red }
+
   return (
     <div style={{ padding:14 }}>
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
         <h2 style={{ fontSize:22, fontWeight:800, color:C.gold, textTransform:'uppercase', letterSpacing:1 }}>📬 Mensajes</h2>
         <button onClick={onRefresh} style={{ background:C.surface, color:C.muted, border:`1px solid ${C.border}`, borderRadius:8, padding:'6px 12px', cursor:'pointer', fontSize:13 }}>🔄 Actualizar</button>
       </div>
+
       {inbox.length===0
-        ? <Empty icon="📭" title="No tenés mensajes" sub="Cuando alguien quiera intercambiar figuritas con vos, aparecerá acá" />
+        ? <Empty icon="📭" title="No tenés mensajes" sub="Cuando alguien quiera intercambiar con vos, aparecerá acá" />
         : (
           <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
             {inbox.map(msg => (
-              <div key={msg.id} style={{ background:C.surface, border:`1px solid ${msg.status==='pending'?'#1e40af':C.border}`, borderRadius:12, padding:14 }}>
-                <div style={{ display:'flex', justifyContent:'space-between', marginBottom:6, flexWrap:'wrap', gap:4 }}>
+              <div key={msg.id} style={{ background:C.surface, border:`1px solid ${statusColor[msg.status]||C.border}44`, borderRadius:12, padding:14 }}>
+                <div style={{ display:'flex', justifyContent:'space-between', marginBottom:8, flexWrap:'wrap', gap:4 }}>
                   <div>
                     <span style={{ fontWeight:700, fontSize:15, color:C.text }}>{msg.fromName}</span>
                     <span style={{ color:C.muted, fontSize:12, marginLeft:8 }}>@{msg.from}</span>
                   </div>
-                  <span style={{ fontSize:11, color:C.muted }}>{new Date(msg.ts).toLocaleDateString('es-UY',{day:'2-digit',month:'2-digit',year:'2-digit'})}</span>
+                  <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                    <span style={{ fontSize:12, color:statusColor[msg.status]||C.muted, fontWeight:600 }}>{statusLabel[msg.status]||msg.status}</span>
+                    <span style={{ fontSize:11, color:C.muted }}>{new Date(msg.ts).toLocaleDateString('es-UY',{day:'2-digit',month:'2-digit'})}</span>
+                  </div>
                 </div>
-                {msg.msg && <p style={{ color:'#94a3b8', fontSize:14, fontStyle:'italic', marginBottom:8, borderLeft:`3px solid ${C.border2}`, paddingLeft:10 }}>"{msg.msg}"</p>}
+
                 {msg.theyGiveMe?.length>0 && (
-                  <div style={{ fontSize:12, color:C.green, marginBottom:4 }}>
-                    ✅ <strong>Puede darte:</strong> {msg.theyGiveMe.slice(0,15).join(', ')}{msg.theyGiveMe.length>15?` y ${msg.theyGiveMe.length-15} más`:''}
+                  <div style={{ marginBottom:6 }}>
+                    <div style={{ fontSize:12, color:C.green, fontWeight:600, marginBottom:4 }}>Te pide que le des ({msg.theyGiveMe.length}):</div>
+                    <div style={{ display:'flex', flexWrap:'wrap', gap:3 }}>
+                      {msg.theyGiveMe.slice(0,20).map(k => <Tag key={k} text={k} color={C.green} />)}
+                      {msg.theyGiveMe.length>20 && <span style={{color:C.muted,fontSize:11,alignSelf:'center'}}>+{msg.theyGiveMe.length-20}</span>}
+                    </div>
                   </div>
                 )}
                 {msg.iGiveThem?.length>0 && (
-                  <div style={{ fontSize:12, color:C.gold }}>
-                    🎁 <strong>Necesita de vos:</strong> {msg.iGiveThem.slice(0,15).join(', ')}{msg.iGiveThem.length>15?` y ${msg.iGiveThem.length-15} más`:''}
+                  <div style={{ marginBottom:10 }}>
+                    <div style={{ fontSize:12, color:C.gold, fontWeight:600, marginBottom:4 }}>Te va a dar a vos ({msg.iGiveThem.length}):</div>
+                    <div style={{ display:'flex', flexWrap:'wrap', gap:3 }}>
+                      {msg.iGiveThem.slice(0,20).map(k => <Tag key={k} text={k} color={C.gold} />)}
+                      {msg.iGiveThem.length>20 && <span style={{color:C.muted,fontSize:11,alignSelf:'center'}}>+{msg.iGiveThem.length-20}</span>}
+                    </div>
+                  </div>
+                )}
+
+                {(msg.status==='pending' || msg.status==='accepted') && (
+                  <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginTop:8, paddingTop:10, borderTop:`1px solid ${C.border}` }}>
+                    {msg.status==='pending' && (
+                      <button onClick={() => onAccept(msg)} style={{ flex:1, padding:'8px', background:'rgba(16,185,129,0.15)', color:C.green, border:`1px solid ${C.green}55`, borderRadius:8, cursor:'pointer', fontSize:13, fontWeight:700 }}>
+                        ✅ Aceptar
+                      </button>
+                    )}
+                    <button onClick={() => onComplete(msg)} style={{ flex:1, padding:'8px', background:'rgba(59,130,246,0.15)', color:C.blue, border:`1px solid ${C.blue}55`, borderRadius:8, cursor:'pointer', fontSize:13, fontWeight:700 }}>
+                      ✔ Realizado
+                    </button>
+                    <button onClick={() => onReject(msg)} style={{ flex:1, padding:'8px', background:'rgba(248,113,113,0.12)', color:C.red, border:`1px solid ${C.red}44`, borderRadius:8, cursor:'pointer', fontSize:13, fontWeight:700 }}>
+                      ❌ Rechazar
+                    </button>
                   </div>
                 )}
               </div>
@@ -404,85 +408,33 @@ function InboxScreen({ inbox, onRefresh }) {
   )
 }
 
-// ─── PANTALLA SOLICITUD ───────────────────────────────────────────────────────
-
-function RequestScreen({ toUser, toName, onSend, onBack }) {
-  const [msg, setMsg] = useState('')
-  const [sending, setSending] = useState(false)
-
-  const handleSend = async () => {
-    setSending(true)
-    await onSend(msg)
-    setSending(false)
-  }
-
-  return (
-    <div style={{ padding:14, maxWidth:520 }}>
-      <button onClick={onBack} style={{ background:'transparent', border:'none', color:C.muted, cursor:'pointer', fontSize:13, marginBottom:16, display:'flex', alignItems:'center', gap:4 }}>
-        ← Volver
-      </button>
-      <div style={{ background:C.surface, borderRadius:14, padding:24, border:`1px solid ${C.border2}` }}>
-        <h3 style={{ fontSize:20, fontWeight:800, color:C.gold, marginBottom:4, textTransform:'uppercase', letterSpacing:1 }}>Solicitar intercambio</h3>
-        <p style={{ color:C.muted, fontSize:14, marginBottom:20 }}>
-          Para: <strong style={{color:C.text}}>{toName}</strong> <span style={{color:C.muted}}>(@{toUser})</span>
-        </p>
-        <div style={{ marginBottom:14 }}>
-          <label style={{ fontSize:13, color:C.muted, marginBottom:6, display:'block' }}>Mensaje (opcional)</label>
-          <textarea
-            value={msg}
-            onChange={e => setMsg(e.target.value)}
-            placeholder="Ej: Hola! Puedo encontrarme el sábado en plaza Independencia o en el Mercado del Puerto 🤝"
-            style={{ ...INPUT, height:90, resize:'vertical', display:'block' }}
-          />
-        </div>
-        <button
-          onClick={handleSend}
-          disabled={sending}
-          style={{ width:'100%', padding:'12px', background:sending?'#1e2d4a':`linear-gradient(135deg,#1d4ed8,${C.blue})`, color:sending?C.muted:'#fff', border:'none', borderRadius:10, cursor:sending?'not-allowed':'pointer', fontSize:15, fontWeight:700 }}
-        >
-          {sending ? 'Enviando...' : '✉️ Enviar solicitud'}
-        </button>
-        <p style={{ textAlign:'center', fontSize:12, color:C.muted, marginTop:12 }}>
-          La otra persona verá tu solicitud junto con la lista de figuritas a intercambiar.
-        </p>
-      </div>
-    </div>
-  )
-}
-
-// ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
+// ─── APP ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [screen, setScreen]         = useState('auth')
-  const [authMode, setAuthMode]     = useState('login')
-  const [form, setForm]             = useState({username:'', password:'', name:''})
-  const [authError, setAuthError]   = useState('')
+  const [screen, setScreen]           = useState('auth')
+  const [authMode, setAuthMode]       = useState('login')
+  const [form, setForm]               = useState({username:'', password:'', name:''})
+  const [authError, setAuthError]     = useState('')
   const [authLoading, setAuthLoading] = useState(false)
-
-  const [user, setUser]             = useState(null)
-  const [col, setCol]               = useState({owned:{}, dupes:{}})
-  const [filter, setFilter]         = useState('all')
-  const [saving, setSaving]         = useState(false)
-
-  const [tradeData, setTradeData]   = useState(null)
+  const [user, setUser]               = useState(null)
+  const [col, setCol]                 = useState({owned:{}, dupes:{}, pending:{}})
+  const [filter, setFilter]           = useState('all')
+  const [saving, setSaving]           = useState(false)
+  const [tradeData, setTradeData]     = useState(null)
   const [tradeLoading, setTradeLoading] = useState(false)
-  const [inbox, setInbox]           = useState([])
-  const [requestTarget, setRequestTarget] = useState(null)
+  const [inbox, setInbox]             = useState([])
 
   const saveTimer = useRef(null)
   const userRef   = useRef(null)
-  const colRef    = useRef({owned:{}, dupes:{}})
-  useEffect(() => { userRef.current = user }, [user])
+  const colRef    = useRef({owned:{}, dupes:{}, pending:{}})
+  const setUserRef = (u) => { userRef.current = u; setUser(u) }
 
-  // Guarda con debounce cada vez que se modifica la colección
   const scheduleSave = (newCol) => {
     colRef.current = newCol
     setSaving(true)
     if (saveTimer.current) clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(async () => {
-      if (userRef.current) {
-        await saveCollection(userRef.current.username, colRef.current.owned, colRef.current.dupes)
-      }
+      if (userRef.current) await saveCollection(userRef.current.username, colRef.current.owned, colRef.current.dupes, colRef.current.pending)
       setSaving(false)
     }, 800)
   }
@@ -490,152 +442,125 @@ export default function App() {
   const toggle = (code, num) => {
     const key = `${code}-${num}`
     setCol(prev => {
-      const next = { owned:{...prev.owned}, dupes:{...prev.dupes} }
-      if (!next.owned[key]) {
-        next.owned[key] = true
-      } else if (!(next.dupes[key] > 0)) {
-        next.dupes[key] = 1
-      } else if (next.dupes[key] >= 10) {
-        delete next.owned[key]; delete next.dupes[key]
-      } else {
-        next.dupes[key]++
-      }
+      if (prev.pending[key]) return prev  // no modificar figuritas en intercambio pendiente
+      const next = { owned:{...prev.owned}, dupes:{...prev.dupes}, pending:{...prev.pending} }
+      if (!next.owned[key]) { next.owned[key] = true }
+      else if (!(next.dupes[key]>0)) { next.dupes[key] = 1 }
+      else if (next.dupes[key] >= 10) { delete next.owned[key]; delete next.dupes[key] }
+      else { next.dupes[key]++ }
       scheduleSave(next)
       return next
     })
   }
 
   const handleAuth = async () => {
-    setAuthError('')
-    setAuthLoading(true)
+    setAuthError(''); setAuthLoading(true)
     try {
-      if (authMode === 'register') {
-        if (!form.name.trim() || !form.username.trim() || !form.password) {
-          setAuthError('Completá todos los campos'); return
-        }
-        if (/\s/.test(form.username)) {
-          setAuthError('El usuario no puede tener espacios'); return
-        }
+      if (authMode==='register') {
+        if (!form.name.trim()||!form.username.trim()||!form.password) { setAuthError('Completá todos los campos'); return }
+        if (/\s/.test(form.username)) { setAuthError('Usuario sin espacios'); return }
         const u = await registerUser(form.username, form.password, form.name.trim())
-        setUser(u)
-        setCol({owned:{}, dupes:{}})
-        setScreen('album')
+        setUserRef(u); setCol({owned:{}, dupes:{}, pending:{}}); setScreen('album')
       } else {
-        if (!form.username.trim() || !form.password) {
-          setAuthError('Ingresá usuario y contraseña'); return
-        }
-        const u  = await loginUser(form.username, form.password)
-        const c  = await getCollection(u.username)
+        if (!form.username.trim()||!form.password) { setAuthError('Ingresá usuario y contraseña'); return }
+        const u = await loginUser(form.username, form.password)
+        const c = await getCollection(u.username)
         const msgs = await getInbox(u.username)
-        setUser(u); setCol(c); setInbox(msgs)
-        setScreen('album')
+        setUserRef(u); setCol(c); setInbox(msgs); setScreen('album')
       }
-    } catch (err) {
-      setAuthError(err.message)
-    } finally {
-      setAuthLoading(false)
-    }
+    } catch (err) { setAuthError(err.message) }
+    finally { setAuthLoading(false) }
   }
 
   const logout = () => {
     if (saveTimer.current) clearTimeout(saveTimer.current)
-    setUser(null); setCol({owned:{}, dupes:{}}); setForm({username:'', password:'', name:''})
-    setScreen('auth'); setTradeData(null); setRequestTarget(null)
+    setUser(null); setCol({owned:{}, dupes:{}, pending:{}}); setForm({username:'', password:'', name:''})
+    setScreen('auth'); setTradeData(null)
   }
 
   const goTrades = async () => {
-    setScreen('trades'); setTradeLoading(true); setTradeData(null); setRequestTarget(null)
-    try {
-      const users = await getAllCollections(user.username)
-      setTradeData({users})
-    } finally {
-      setTradeLoading(false)
-    }
+    setScreen('trades'); setTradeLoading(true); setTradeData(null)
+    try { const users = await getAllCollections(user.username); setTradeData({users}) }
+    finally { setTradeLoading(false) }
   }
 
   const loadInbox = async () => {
     const msgs = await getInbox(user.username)
-    setInbox(msgs); setScreen('inbox'); setRequestTarget(null)
+    setInbox(msgs); setScreen('inbox')
   }
 
-  const handleSendRequest = async (toUser, toName, msg) => {
-    const myMissing = new Set()
-    const myDupeSet = new Set()
-    for (const p of PAGES) for (let i=1;i<=p.n;i++) {
-      const k=`${p.code}-${i}`
-      if (!col.owned[k])          myMissing.add(k)
-      if ((col.dupes[k]||0) > 0)  myDupeSet.add(k)
-    }
-    const theirInfo = tradeData?.users[toUser]
-    const theirDupes = new Set(Object.entries(theirInfo?.col?.dupes||{}).filter(([,v])=>v>0).map(([k])=>k))
-    const theirMissing = new Set()
-    if (theirInfo) for (const p of PAGES) for (let i=1;i<=p.n;i++) { const k=`${p.code}-${i}`; if (!theirInfo.col.owned[k]) theirMissing.add(k) }
+  // Envía solicitud de intercambio automáticamente (sin texto)
+  const handleIntercambiar = async (toUser, toName, theyGiveMe, iGiveThem) => {
+    try {
+      await sendTradeRequest({ from:user.username, fromName:user.name, toUser, theyGiveMe, iGiveThem })
+      alert(`✅ Solicitud enviada a ${toName}!\nVa a aparecer en su bandeja de mensajes.`)
+    } catch(err) { alert('Error: ' + err.message) }
+  }
 
-    await sendMessage({
-      id: Date.now().toString(),
-      from: user.username, fromName: user.name,
-      toUser, msg,
-      theyGiveMe: [...theirDupes].filter(k => myMissing.has(k)),
-      iGiveThem:  [...myDupeSet].filter(k => theirMissing.has(k)),
-    })
-    setRequestTarget(null)
-    alert(`✅ Solicitud enviada a ${toName}!`)
+  const handleAccept = async (msg) => {
+    try {
+      await acceptTrade(msg)
+      // Actualiza colección local si soy el solicitante (no aplica acá, inbox es del aceptante)
+      await loadInbox()
+      alert(`✅ Intercambio aceptado. Las figuritas aparecerán en ⏳ pendiente para ${msg.fromName}.`)
+    } catch(err) { alert('Error: ' + err.message) }
+  }
+
+  const handleReject = async (msg) => {
+    if (!confirm('¿Rechazar este intercambio?')) return
+    try { await rejectTrade(msg); await loadInbox() }
+    catch(err) { alert('Error: ' + err.message) }
+  }
+
+  const handleComplete = async (msg) => {
+    if (!confirm('¿Marcar como realizado? Esto actualizará las colecciones de ambos.')) return
+    try {
+      await completeTrade(msg, user.username)
+      // Recarga la colección propia por si recibió figuritas
+      const newCol = await getCollection(user.username)
+      setCol(newCol)
+      await loadInbox()
+      alert('✅ ¡Intercambio realizado! Las colecciones fueron actualizadas.')
+    } catch(err) { alert('Error: ' + err.message) }
   }
 
   const stats = (() => {
     const owned = Object.keys(col.owned).length
     const dupeCount = Object.values(col.dupes).reduce((s,v) => s+(v||0), 0)
-    return { owned, missing:TOTAL-owned, dupeCount, pct:Math.round(owned/TOTAL*100) }
+    const pendingCount = Object.keys(col.pending).filter(k => !col.owned[k]).length
+    return { owned, missing:TOTAL-owned, dupeCount, pendingCount, pct:Math.round(owned/TOTAL*100) }
   })()
 
-  const pendingCount = inbox.filter(m => m.status==='pending').length
+  const pendingInbox = inbox.filter(m => m.status==='pending').length
 
-  if (screen==='auth') return (
-    <AuthScreen mode={authMode} setMode={setAuthMode} form={form} setForm={setForm} onSubmit={handleAuth} error={authError} loading={authLoading} />
-  )
+  if (screen==='auth') return <AuthScreen mode={authMode} setMode={setAuthMode} form={form} setForm={setForm} onSubmit={handleAuth} error={authError} loading={authLoading} />
 
   return (
     <div style={{ fontFamily:'system-ui,-apple-system,sans-serif', background:C.bg, minHeight:'100vh', color:C.text }}>
-      {/* Barra de navegación */}
       <header style={{ background:'#0a0f1e', borderBottom:`2px solid ${C.border2}`, padding:'8px 14px', position:'sticky', top:0, zIndex:50, display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
         <span style={{ fontSize:18, fontWeight:900, color:C.gold, letterSpacing:2, flexShrink:0, textTransform:'uppercase' }}>⚽ Mundial 2026</span>
-
         <div style={{ flex:'1 1 100px', minWidth:100 }}>
           <div style={{ background:C.border, borderRadius:99, height:5 }}>
             <div style={{ background:`linear-gradient(90deg,${C.green},${C.gold})`, width:`${stats.pct}%`, height:'100%', borderRadius:99, transition:'width 0.6s' }} />
           </div>
           <div style={{ fontSize:10, color:C.muted, marginTop:2 }}>{stats.owned}/{TOTAL} · {stats.pct}%</div>
         </div>
-
         <div style={{ display:'flex', gap:4, flexWrap:'wrap', alignItems:'center' }}>
-          <button onClick={() => { setScreen('album'); setRequestTarget(null) }} style={navBtn(screen==='album' && !requestTarget)}>📋 Álbum</button>
+          <button onClick={() => setScreen('album')} style={navBtn(screen==='album')}>📋 Álbum</button>
           <button onClick={goTrades}  style={navBtn(screen==='trades')}>🔄 Intercambios</button>
-          <button onClick={loadInbox} style={navBtn(screen==='inbox', pendingCount>0?C.blue:C.gold)}>
-            📬 Mensajes{pendingCount>0?` (${pendingCount})`:''}
+          <button onClick={loadInbox} style={navBtn(screen==='inbox', pendingInbox>0?C.blue:C.gold)}>
+            📬 Mensajes{pendingInbox>0?` (${pendingInbox})`:''}
           </button>
           <button onClick={logout} style={{ ...navBtn(false), borderLeft:`1px solid ${C.border}`, paddingLeft:12, marginLeft:4 }}>
             👤 {user.name.split(' ')[0]} · Salir
           </button>
         </div>
-        {saving && <span style={{ fontSize:11, color:C.gold }}>💾 guardando...</span>}
+        {saving && <span style={{ fontSize:11, color:C.gold }}>💾</span>}
       </header>
 
-      {screen==='album' && (
-        <AlbumScreen col={col} filter={filter} setFilter={setFilter} toggle={toggle} stats={stats} />
-      )}
-      {screen==='trades' && !requestTarget && (
-        <TradesScreen col={col} tradeData={tradeData} loading={tradeLoading} onContact={(tu,tn) => setRequestTarget({toUser:tu, toName:tn})} />
-      )}
-      {screen==='trades' && requestTarget && (
-        <RequestScreen
-          toUser={requestTarget.toUser} toName={requestTarget.toName}
-          onSend={(msg) => handleSendRequest(requestTarget.toUser, requestTarget.toName, msg)}
-          onBack={() => setRequestTarget(null)}
-        />
-      )}
-      {screen==='inbox' && (
-        <InboxScreen inbox={inbox} onRefresh={loadInbox} />
-      )}
+      {screen==='album' && <AlbumScreen col={col} filter={filter} setFilter={setFilter} toggle={toggle} stats={stats} />}
+      {screen==='trades' && <TradesScreen col={col} tradeData={tradeData} loading={tradeLoading} onIntercambiar={handleIntercambiar} />}
+      {screen==='inbox' && <InboxScreen inbox={inbox} onRefresh={loadInbox} onAccept={handleAccept} onReject={handleReject} onComplete={handleComplete} />}
     </div>
   )
 }
