@@ -9,10 +9,11 @@ import {
 // ─── DATOS DEL ÁLBUM ─────────────────────────────────────────────────────────
 
 const PAGES = [
-  { code:'FWC', name:'FIFA World Cup 2026', flag:'🌍',  n:19 },
+  { code:'FWC', name:'FIFA World Cup 2026', flag:'🌍',  n:20, start:0 },
   { code:'MEX', name:'México',              flag:'🇲🇽', n:20 },
   { code:'RSA', name:'Sudáfrica',           flag:'🇿🇦', n:20 },
   { code:'KOR', name:'Corea del Sur',       flag:'🇰🇷', n:20 },
+  { code:'CZE', name:'Rep. Checa',          flag:'🇨🇿', n:20 },
   { code:'CAN', name:'Canadá',              flag:'🇨🇦', n:20 },
   { code:'BIH', name:'Bosnia-Herzegovina',  flag:'🇧🇦', n:20 },
   { code:'QAT', name:'Qatar',               flag:'🇶🇦', n:20 },
@@ -20,7 +21,7 @@ const PAGES = [
   { code:'BRA', name:'Brasil',              flag:'🇧🇷', n:20 },
   { code:'MAR', name:'Marruecos',           flag:'🇲🇦', n:20 },
   { code:'HAI', name:'Haití',               flag:'🇭🇹', n:20 },
-  { code:'SCO', name:'Escocia',             flag:'🏴',   n:20 },
+  { code:'SCO', name:'Escocia',             flag:'SCO',  n:20 },
   { code:'USA', name:'Estados Unidos',      flag:'🇺🇸', n:20 },
   { code:'PAR', name:'Paraguay',            flag:'🇵🇾', n:20 },
   { code:'AUS', name:'Australia',           flag:'🇦🇺', n:20 },
@@ -34,7 +35,6 @@ const PAGES = [
   { code:'SWE', name:'Suecia',              flag:'🇸🇪', n:20 },
   { code:'TUN', name:'Túnez',               flag:'🇹🇳', n:20 },
   { code:'BEL', name:'Bélgica',             flag:'🇧🇪', n:20 },
-  { code:'CZE', name:'Rep. Checa',          flag:'🇨🇿', n:20 },
   { code:'EGY', name:'Egipto',              flag:'🇪🇬', n:20 },
   { code:'IRN', name:'Irán',                flag:'🇮🇷', n:20 },
   { code:'NZL', name:'Nueva Zelanda',       flag:'🇳🇿', n:20 },
@@ -54,7 +54,7 @@ const PAGES = [
   { code:'COD', name:'Congo DR',            flag:'🇨🇩', n:20 },
   { code:'UZB', name:'Uzbekistán',          flag:'🇺🇿', n:20 },
   { code:'COL', name:'Colombia',            flag:'🇨🇴', n:20 },
-  { code:'ENG', name:'Inglaterra',          flag:'🏴',   n:20 },
+  { code:'ENG', name:'Inglaterra',          flag:'ENG',  n:20 },
   { code:'CRO', name:'Croacia',             flag:'🇭🇷', n:20 },
   { code:'GHA', name:'Ghana',               flag:'🇬🇭', n:20 },
   { code:'PAN', name:'Panamá',              flag:'🇵🇦', n:20 },
@@ -105,7 +105,7 @@ function Chip({ num, owned, dupes, onClick }) {
       onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.18)'}
       onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
     >
-      <span style={{ fontSize:13 }}>{num}</span>
+      <span style={{ fontSize:13 }}>{num === 0 ? '00' : num}</span>
       {hasDupe && <span style={{ fontSize:9, opacity:0.9 }}>×{dupes}</span>}
       {owned && !hasDupe && <span style={{ fontSize:9 }}>✓</span>}
     </button>
@@ -225,7 +225,7 @@ function AlbumScreen({ col, filter, setFilter, toggle, stats }) {
       </div>
 
       {PAGES.map(p => {
-        const nums = Array.from({length:p.n}, (_,i) => i+1)
+        const nums = Array.from({length:p.n}, (_,i) => (p.start ?? 1) + i)
         const ownedCount = nums.filter(n => col.owned[`${p.code}-${n}`]).length
         const hasDupesInPage = nums.some(n => (col.dupes[`${p.code}-${n}`]||0) > 0)
 
